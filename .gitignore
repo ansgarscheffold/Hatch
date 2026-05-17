@@ -1,0 +1,35 @@
+# Build & distribution
+.build/
+dist/
+*.dSYM/
+*.dSYM
+
+# Lokale Design-Assets & Screenshots (nicht ins Repo)
+Images/
+screenshots/
+
+# macOS / Xcode
+.DS_Store
+**/.DS_Store
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+.swiftpm/xcode/
+
+# Editor / Secrets
+.vscode/
+.idea/
+*.swp
+*~
+.env
+.env.*
+.netrc
+
+# Lokale Datenbanken / Keys (falls je im Projektordner)
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+id_rsa
+id_ed25519
