@@ -1,3 +1,7 @@
+<p align="left">
+  <img src="Sources/Hatch/Resources/Logo.svg" alt="Hatch" width="96" />
+</p>
+
 # Hatch
 
 **Hatch** is a native **SSH client for macOS** built with **SwiftUI**. It combines a server library, SSH key management, and a full **xterm-style terminal** (via embedded [XTerminalUI](https://github.com/Lakr233/XTerminalUI) / WebKit) backed by **[NSRemoteShell](Sources/NSRemoteShell)** (libssh2).

@@ -4,9 +4,8 @@ dist/
 *.dSYM/
 *.dSYM
 
-# Lokale Design-Assets & Screenshots (nicht ins Repo)
+# Lokale Design-Assets (Logo-Entwürfe etc., nicht ins Repo)
 Images/
-screenshots/
 
 # macOS / Xcode
 .DS_Store
