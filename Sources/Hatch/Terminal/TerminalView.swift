@@ -239,6 +239,7 @@ struct TerminalViewInternal: View {
     @ObservedObject var manager: ConnectionManager
     @ObservedObject var terminalHolder: TerminalHolder
     @ObservedObject private var settings = AppSettings.shared
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var keyboardBridge = TerminalKeyboardBridge()
     @State private var lastTerminalFocusAt: Date = .distantPast
     /// Terminal-Tab ist sichtbar (onAppear/onDisappear) — Bridge darf nur dann Tasten umleiten.
@@ -319,6 +320,9 @@ struct TerminalViewInternal: View {
                             setTerminalThemeWithRetry(maxRetries: 3, delay: 0.1)
                         }
                     }
+                    .onChange(of: colorScheme) { _ in
+                        setTerminalTheme()
+                    }
                     .onChange(of: settings.terminalFontSize) { newSize in
                         // Update font size via JavaScript once the terminal is ready
                         updateTerminalSetting("fontSize", value: String(newSize))
@@ -391,20 +395,37 @@ struct TerminalViewInternal: View {
         let blue = Int(rgbColor.blueComponent * 255)
         let hexBgColor = String(format: "#%02X%02X%02X", red, green, blue)
         
-        // Set terminal theme via JavaScript
+        // Set terminal theme via JavaScript (xterm CSS defaults to #000 viewport — override via injected style)
         let js = """
         (function() {
             try {
+                var bg = '\(hexBgColor)';
+                var fg = '\(textColor)';
+                var style = document.getElementById('hatch-terminal-theme');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'hatch-terminal-theme';
+                    document.head.appendChild(style);
+                }
+                style.textContent = [
+                    'html, body, #root { background: ' + bg + ' !important; }',
+                    '.xterm .xterm-viewport { background-color: ' + bg + ' !important; }',
+                    '.xterm .composition-view { background: ' + bg + ' !important; color: ' + fg + ' !important; }'
+                ].join('\\n');
                 if (!window.term || !window.term.options) {
                     console.warn('setTerminalTheme: term/options not ready');
                     return;
                 }
-                window.term.options.theme = {
-                    background: '\(hexBgColor)',
-                    foreground: '\(textColor)',
-                    cursor: '\(textColor)',
-                    cursorAccent: '\(hexBgColor)'
+                var theme = {
+                    background: bg,
+                    foreground: fg,
+                    cursor: fg,
+                    cursorAccent: bg
                 };
+                window.term.options.theme = theme;
+                if (typeof window.term.setOption === 'function') {
+                    window.term.setOption('theme', theme);
+                }
                 window.term.refresh(0, window.term.rows - 1);
             } catch (e) {
                 console.error('setTerminalTheme failed:', e);

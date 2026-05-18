@@ -996,6 +996,8 @@ enum KeySheetMode: String, Identifiable, Hashable {
 
 enum NavigationItem: Hashable {
     case overview
+    case stats
+    case docker
     case keys
     case server(Server)
 }
@@ -1018,8 +1020,22 @@ class AppViewModel: ObservableObject {
     @Published var showDeleteKeyConfirmation: SSHKey? = nil
     @Published var terminalHolders: [UUID: TerminalHolder] = [:]
     @Published var pendingAutoConnect: UUID? = nil
+    @Published var serverStats: [UUID: ServerStatsSnapshot] = [:]
+    @Published var serverStatsState: [UUID: ServerStatsFetchState] = [:]
+    @Published var serverStatsDetail: [UUID: ServerStatsDetailSnapshot] = [:]
+    @Published var serverStatsDetailState: [UUID: ServerStatsDetailFetchState] = [:]
+    @Published var pendingRemoteCommand: RemoteCommandRequest?
+    @Published var remoteCommandResult: RemoteCommandResult?
+    @Published var isRunningRemoteCommand = false
+    @Published var serverDocker: [UUID: DockerServerSnapshot] = [:]
+    @Published var serverDockerState: [UUID: DockerFetchState] = [:]
+    @Published var pendingDockerCommand: DockerCommandRequest?
+    @Published var dockerCommandResult: DockerCommandResult?
+    @Published var isRunningDockerCommand = false
 
     private var dbQueue: DatabaseQueue?
+    private var statsPollTimer: Timer?
+    private var dockerPollTimer: Timer?
     private var connectionCancellables: [UUID: AnyCancellable] = [:]
     
     /// Einmal pro App-Lebensdauer. Der Master-Key für AES-GCM liegt **ausschließlich in der Keychain** (Passwörter selbst: verschlüsselt in der DB, nicht als Keychain-Einträge).
@@ -1548,6 +1564,302 @@ class AppViewModel: ObservableObject {
 
     func getConnectionManager(for server: Server) -> ConnectionManager? {
         return connectedServers[server.id]
+    }
+
+    private func sshAuthParameters(for server: Server) -> (
+        password: String?,
+        privateKeyPEM: String?,
+        publicKeyPEM: String?,
+        keyPassphrase: String?,
+        usePassword: Bool
+    ) {
+        var privateKeyPEM: String?
+        var publicKeyPEM: String?
+        var keyPassphrase: String?
+
+        if !server.usePassword {
+            if let keyId = server.keyId, let key = getKey(by: keyId) {
+                privateKeyPEM = key.privateKey
+                publicKeyPEM = key.publicKey
+                keyPassphrase = key.passphrase
+            } else if let legacyPath = server.privateKeyPath, !legacyPath.isEmpty,
+                      FileManager.default.fileExists(atPath: legacyPath),
+                      let legacyKey = try? String(contentsOf: URL(fileURLWithPath: legacyPath), encoding: .utf8) {
+                privateKeyPEM = legacyKey
+            }
+        }
+
+        return (server.password, privateKeyPEM, publicKeyPEM, keyPassphrase, server.usePassword)
+    }
+
+    func refreshServerStats(for server: Server) {
+        let serverId = server.id
+        serverStatsState[serverId] = .loading
+
+        let auth = sshAuthParameters(for: server)
+
+        let sshAuth = ServerSSHAuth(
+            password: auth.password,
+            privateKeyPEM: auth.privateKeyPEM,
+            publicKeyPEM: auth.publicKeyPEM,
+            keyPassphrase: auth.keyPassphrase,
+            usePassword: auth.usePassword
+        )
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = ServerStatsCollector.fetch(
+                host: server.host,
+                port: server.port,
+                username: server.username,
+                auth: sshAuth
+            )
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let snapshot):
+                    self.serverStats[serverId] = snapshot
+                    self.serverStatsState[serverId] = .ready(snapshot)
+                case .failure(let error):
+                    self.serverStatsState[serverId] = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    func refreshAllServerStats() {
+        for server in servers {
+            refreshServerStats(for: server)
+        }
+    }
+
+    func refreshServerStatsDetail(for server: Server) {
+        let serverId = server.id
+        serverStatsDetailState[serverId] = .loading
+
+        let auth = sshAuthParameters(for: server)
+        let sshAuth = ServerSSHAuth(
+            password: auth.password,
+            privateKeyPEM: auth.privateKeyPEM,
+            publicKeyPEM: auth.publicKeyPEM,
+            keyPassphrase: auth.keyPassphrase,
+            usePassword: auth.usePassword
+        )
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = ServerStatsDetailCollector.fetch(
+                host: server.host,
+                port: server.port,
+                username: server.username,
+                auth: sshAuth
+            )
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let snapshot):
+                    self.serverStatsDetail[serverId] = snapshot
+                    self.serverStatsDetailState[serverId] = .ready(snapshot)
+                    self.serverStats[serverId] = Self.summarySnapshot(from: snapshot)
+                    self.serverStatsState[serverId] = .ready(Self.summarySnapshot(from: snapshot))
+                case .failure(let error):
+                    self.serverStatsDetailState[serverId] = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private static func summarySnapshot(from detail: ServerStatsDetailSnapshot) -> ServerStatsSnapshot {
+        let netDown = detail.networkInterfaces.compactMap(\.downloadPerSec).reduce(0, +)
+        let netUp = detail.networkInterfaces.compactMap(\.uploadPerSec).reduce(0, +)
+        let diskRead = detail.disks.first?.readPerSec
+        let diskWrite = detail.disks.first?.writePerSec
+        return ServerStatsSnapshot(
+            cpuPercent: detail.cpu.totalPercent,
+            memoryPercent: detail.memory.usedPercent,
+            temperatureCelsius: detail.temperatureCelsius,
+            networkDownloadPerSec: netDown > 0 ? netDown : nil,
+            networkUploadPerSec: netUp > 0 ? netUp : nil,
+            diskReadPerSec: diskRead,
+            diskWritePerSec: diskWrite,
+            fetchedAt: detail.fetchedAt
+        )
+    }
+
+    func startStatsPolling() {
+        stopStatsPolling()
+        refreshAllServerStats()
+        statsPollTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.refreshAllServerStats()
+        }
+    }
+
+    func stopStatsPolling() {
+        statsPollTimer?.invalidate()
+        statsPollTimer = nil
+    }
+
+    func requestRemoteCommand(_ command: ServerRemoteCommand, for server: Server) {
+        pendingRemoteCommand = RemoteCommandRequest(server: server, command: command)
+    }
+
+    func refreshServerDocker(for server: Server) {
+        let serverId = server.id
+        serverDockerState[serverId] = .loading
+        let auth = sshAuthParameters(for: server)
+        let sshAuth = ServerSSHAuth(
+            password: auth.password,
+            privateKeyPEM: auth.privateKeyPEM,
+            publicKeyPEM: auth.publicKeyPEM,
+            keyPassphrase: auth.keyPassphrase,
+            usePassword: auth.usePassword
+        )
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = DockerCollector.fetch(
+                host: server.host,
+                port: server.port,
+                username: server.username,
+                auth: sshAuth
+            )
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let snapshot):
+                    self.serverDocker[serverId] = snapshot
+                    self.serverDockerState[serverId] = .ready(snapshot)
+                case .failure(let error):
+                    self.serverDockerState[serverId] = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    func refreshAllServerDocker() {
+        for server in servers {
+            refreshServerDocker(for: server)
+        }
+    }
+
+    func startDockerPolling() {
+        stopDockerPolling()
+        refreshAllServerDocker()
+        dockerPollTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.refreshAllServerDocker()
+        }
+    }
+
+    func stopDockerPolling() {
+        dockerPollTimer?.invalidate()
+        dockerPollTimer = nil
+    }
+
+    func requestDockerCommand(_ command: DockerContainerCommand, containerName: String, on server: Server) {
+        pendingDockerCommand = DockerCommandRequest(server: server, containerName: containerName, command: command)
+    }
+
+    func executePendingDockerCommand() {
+        guard let request = pendingDockerCommand else { return }
+        let server = request.server
+        let command = request.command
+        let containerName = request.containerName
+        pendingDockerCommand = nil
+        isRunningDockerCommand = true
+
+        let auth = sshAuthParameters(for: server)
+        let sshAuth = ServerSSHAuth(
+            password: auth.password,
+            privateKeyPEM: auth.privateKeyPEM,
+            publicKeyPEM: auth.publicKeyPEM,
+            keyPassphrase: auth.keyPassphrase,
+            usePassword: auth.usePassword
+        )
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = DockerCollector.run(
+                command: command,
+                containerName: containerName,
+                host: server.host,
+                port: server.port,
+                username: server.username,
+                auth: sshAuth
+            )
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isRunningDockerCommand = false
+                switch result {
+                case .success(let message):
+                    self.dockerCommandResult = DockerCommandResult(
+                        server: server,
+                        containerName: containerName,
+                        command: command,
+                        success: true,
+                        message: message
+                    )
+                    self.refreshServerDocker(for: server)
+                case .failure(let error):
+                    self.dockerCommandResult = DockerCommandResult(
+                        server: server,
+                        containerName: containerName,
+                        command: command,
+                        success: false,
+                        message: error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
+    func executePendingRemoteCommand() {
+        guard let request = pendingRemoteCommand else { return }
+        let server = request.server
+        let command = request.command
+        pendingRemoteCommand = nil
+        isRunningRemoteCommand = true
+
+        if command.disconnectsAfterSuccess, connectedServers[server.id]?.isConnected == true {
+            disconnect(from: server)
+        }
+
+        let auth = sshAuthParameters(for: server)
+        let sshAuth = ServerSSHAuth(
+            password: auth.password,
+            privateKeyPEM: auth.privateKeyPEM,
+            publicKeyPEM: auth.publicKeyPEM,
+            keyPassphrase: auth.keyPassphrase,
+            usePassword: auth.usePassword
+        )
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = ServerRemoteCommandExecutor.run(
+                command: command,
+                host: server.host,
+                port: server.port,
+                username: server.username,
+                auth: sshAuth
+            )
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isRunningRemoteCommand = false
+                switch result {
+                case .success(let message):
+                    self.remoteCommandResult = RemoteCommandResult(
+                        server: server,
+                        command: command,
+                        success: true,
+                        message: message
+                    )
+                case .failure(let error):
+                    self.remoteCommandResult = RemoteCommandResult(
+                        server: server,
+                        command: command,
+                        success: false,
+                        message: error.localizedDescription
+                    )
+                }
+            }
+        }
     }
 
 }
@@ -2208,6 +2520,30 @@ struct ContentView: View {
             }
             .frame(minWidth: 500, minHeight: 220)
         }
+        .sheet(item: $viewModel.pendingRemoteCommand) { request in
+            RemoteCommandConfirmationSheet(request: request, viewModel: viewModel)
+        }
+        .sheet(item: $viewModel.remoteCommandResult) { result in
+            RemoteCommandResultSheet(
+                result: result,
+                isPresented: Binding(
+                    get: { viewModel.remoteCommandResult != nil },
+                    set: { if !$0 { viewModel.remoteCommandResult = nil } }
+                )
+            )
+        }
+        .sheet(item: $viewModel.pendingDockerCommand) { request in
+            DockerCommandConfirmationSheet(request: request, viewModel: viewModel)
+        }
+        .sheet(item: $viewModel.dockerCommandResult) { result in
+            DockerCommandResultSheet(
+                result: result,
+                isPresented: Binding(
+                    get: { viewModel.dockerCommandResult != nil },
+                    set: { if !$0 { viewModel.dockerCommandResult = nil } }
+                )
+            )
+        }
         // Min-Größe drastisch reduziert, um responsives Layout nicht zu blockieren
                 .frame(minWidth: 420, minHeight: 460)
     }
@@ -2261,6 +2597,51 @@ struct SidebarView: View {
                 }
                 .buttonStyle(.plain)
                 .background(viewModel.selectedNavigationItem == .overview ? Color.accentColor.opacity(0.1) : Color.clear)
+                .cornerRadius(6)
+                .animation(.easeInOut(duration: 0.15), value: viewModel.selectedNavigationItem)
+
+                // Stats tab
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        viewModel.selectedNavigationItem = .stats
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "gauge.with.dots.needle.67percent")
+                            .font(.system(size: 14))
+                        Text(LocalizedStrings.stats)
+                            .font(.system(size: 13, weight: .regular))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(viewModel.selectedNavigationItem == .stats ? Color.accentColor.opacity(0.1) : Color.clear)
+                .cornerRadius(6)
+                .animation(.easeInOut(duration: 0.15), value: viewModel.selectedNavigationItem)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        viewModel.selectedNavigationItem = .docker
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "shippingbox")
+                            .font(.system(size: 14))
+                        Text(LocalizedStrings.docker)
+                            .font(.system(size: 13, weight: .regular))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(viewModel.selectedNavigationItem == .docker ? Color.accentColor.opacity(0.1) : Color.clear)
                 .cornerRadius(6)
                 .animation(.easeInOut(duration: 0.15), value: viewModel.selectedNavigationItem)
                 
@@ -2390,6 +2771,8 @@ private struct ContentSplitView13: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var overviewMode: OverviewViewMode = .grid
+    @State private var statsViewMode: OverviewViewMode = .grid
+    @State private var dockerViewMode: OverviewViewMode = .grid
     @State private var keysViewMode: OverviewViewMode = .grid
 
     @ViewBuilder
@@ -2397,6 +2780,10 @@ private struct ContentSplitView13: View {
         switch viewModel.selectedNavigationItem {
         case .overview, .none:
             ServerOverviewView(viewModel: viewModel, viewMode: $overviewMode)
+        case .stats:
+            ServerStatsView(viewModel: viewModel, viewMode: $statsViewMode)
+        case .docker:
+            DockerView(viewModel: viewModel, viewMode: $dockerViewMode)
         case .keys:
             KeysView(viewModel: viewModel, viewMode: $keysViewMode)
         case .server(let server):
@@ -2493,6 +2880,8 @@ private struct ContentSplitViewLegacy: View {
     @ObservedObject var viewModel: AppViewModel
     @ObservedObject private var settings = AppSettings.shared
     @State private var overviewMode: OverviewViewMode = .grid
+    @State private var statsViewMode: OverviewViewMode = .grid
+    @State private var dockerViewMode: OverviewViewMode = .grid
     @State private var keysViewMode: OverviewViewMode = .grid
 
     @ViewBuilder
@@ -2500,6 +2889,10 @@ private struct ContentSplitViewLegacy: View {
         switch viewModel.selectedNavigationItem {
         case .overview, .none:
             ServerOverviewView(viewModel: viewModel, viewMode: $overviewMode)
+        case .stats:
+            ServerStatsView(viewModel: viewModel, viewMode: $statsViewMode)
+        case .docker:
+            DockerView(viewModel: viewModel, viewMode: $dockerViewMode)
         case .keys:
             KeysView(viewModel: viewModel, viewMode: $keysViewMode)
         case .server(let server):
@@ -2640,10 +3033,15 @@ struct ServerOverviewView: View {
                 GeometryReader { geometry in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
-                            Text(LocalizedStrings.yourServers)
-                                .font(.largeTitle)
-                                .fontWeight(.bold)
-                                .padding(.top, 24)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(LocalizedStrings.yourServers)
+                                    .font(.system(size: 36, weight: .bold))
+                                Text(LocalizedStrings.overviewSubtitle)
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.top, 24)
 
                             if viewMode == .grid {
                                 LazyVGrid(columns: columns(for: geometry.size.width), spacing: 20) {
@@ -2821,6 +3219,8 @@ struct ServerCardView: View {
 
             Spacer()
 
+            serverCommandsMenu
+
             // Tools Menu (Ping, Traceroute)
             Menu {
                 Button {
@@ -2856,6 +3256,36 @@ struct ServerCardView: View {
             .controlSize(.large)
             .menuStyle(BorderlessButtonMenuStyle())
         }
+    }
+
+    @State private var isCommandsHovered = false
+
+    private var serverCommandsMenu: some View {
+        Menu {
+            ServerCommandsMenuContent(server: server, viewModel: viewModel)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "power")
+                Image(systemName: "chevron.down")
+            }
+            .font(.system(size: 14))
+            .frame(width: 48, height: 24)
+            .background(isCommandsHovered ? Color.accentColor.opacity(0.15) : Color.clear)
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isCommandsHovered ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+            )
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    isCommandsHovered = hovering
+                }
+            }
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.large)
+        .menuStyle(BorderlessButtonMenuStyle())
+        .help(LocalizedStrings.serverCommands)
     }
 
     var body: some View {
@@ -3004,6 +3434,10 @@ struct ServerCardView: View {
                     Label(LocalizedStrings.traceroute, systemImage: "arrow.swap")
                 }
             }
+
+            Menu(LocalizedStrings.serverCommands) {
+                ServerCommandsMenuContent(server: server, viewModel: viewModel)
+            }
             
             Divider()
             
@@ -3135,6 +3569,7 @@ struct ServerListView: View {
     @State private var toolOutput: [String] = []
     @State private var toolProcess: Process? = nil
     @State private var isToolsHovered = false
+    @State private var isCommandsHovered = false
     
     private var actionButtons: some View {
         HStack(spacing: 8) {
@@ -3189,6 +3624,32 @@ struct ServerListView: View {
             .buttonStyle(.bordered)
             .foregroundColor(.red)
             .controlSize(.large)
+
+            Menu {
+                ServerCommandsMenuContent(server: server, viewModel: viewModel)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "power")
+                    Image(systemName: "chevron.down")
+                }
+                .font(.system(size: 14))
+                .frame(width: 48, height: 24)
+                .background(isCommandsHovered ? Color.accentColor.opacity(0.15) : Color.clear)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(isCommandsHovered ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+                )
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.12)) {
+                        isCommandsHovered = hovering
+                    }
+                }
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.large)
+            .menuStyle(BorderlessButtonMenuStyle())
+            .help(LocalizedStrings.serverCommands)
 
             // Tools Menu (Ping, Traceroute)
             Menu {
@@ -3337,6 +3798,10 @@ struct ServerListView: View {
                 } label: {
                     Label(LocalizedStrings.traceroute, systemImage: "arrow.swap")
                 }
+            }
+
+            Menu(LocalizedStrings.serverCommands) {
+                ServerCommandsMenuContent(server: server, viewModel: viewModel)
             }
             
             Divider()

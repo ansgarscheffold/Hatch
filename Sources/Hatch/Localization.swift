@@ -21,7 +21,147 @@ struct LocalizedStrings {
     
     // Navigation
     static var overview: String { isGerman ? "Übersicht" : "Overview" }
+    static var stats: String { isGerman ? "Status" : "Status" }
+    static var docker: String { "Docker" }
     static var keys: String { isGerman ? "Schlüssel" : "Keys" }
+
+    static var dockerTitle: String { "Docker" }
+    static var dockerSubtitle: String {
+        isGerman
+            ? "Laufende Container auf Ihren Servern – Stats und Befehle per SSH."
+            : "Running containers on your servers – stats and commands over SSH."
+    }
+    static var dockerContainerCommands: String {
+        isGerman ? "Container-Befehle" : "Container Commands"
+    }
+    static var dockerCommandRestart: String { isGerman ? "Neustart" : "Restart" }
+    static var dockerCommandStop: String { isGerman ? "Stoppen" : "Stop" }
+    static var dockerCommandStart: String { isGerman ? "Starten" : "Start" }
+    static var dockerCommandDestructiveHint: String {
+        isGerman
+            ? "Der Container kann kurz nicht erreichbar sein."
+            : "The container may be briefly unavailable."
+    }
+    static func dockerCommandConfirmRestart(_ container: String, _ server: String) -> String {
+        isGerman
+            ? "Container „\(container)“ auf „\(server)“ neu starten?"
+            : "Restart container \"\(container)\" on \"\(server)\"?"
+    }
+    static func dockerCommandConfirmStop(_ container: String, _ server: String) -> String {
+        isGerman
+            ? "Container „\(container)“ auf „\(server)“ stoppen?"
+            : "Stop container \"\(container)\" on \"\(server)\"?"
+    }
+    static func dockerCommandConfirmStart(_ container: String, _ server: String) -> String {
+        isGerman
+            ? "Container „\(container)“ auf „\(server)“ starten?"
+            : "Start container \"\(container)\" on \"\(server)\"?"
+    }
+
+    // Server stats
+    static var statsTitle: String { isGerman ? "Status" : "Status" }
+    static var statsSubtitle: String {
+        isGerman
+            ? "Live-Kennzahlen per SSH (CPU, RAM, Temperatur, Netzwerk, Festplatte). Linux-Server mit /proc."
+            : "Live metrics over SSH (CPU, RAM, temperature, network, disk). Linux hosts with /proc."
+    }
+    static var statsRefresh: String { isGerman ? "Aktualisieren" : "Refresh" }
+    static var statsLoading: String { isGerman ? "Werte werden geladen …" : "Loading metrics…" }
+    static var statsCPU: String { "CPU" }
+    static var statsMemory: String { isGerman ? "RAM" : "Mem" }
+    static var statsUpload: String { isGerman ? "Upload" : "upload" }
+    static var statsDownload: String { isGerman ? "Download" : "download" }
+    static var statsRead: String { isGerman ? "Lesen" : "Read" }
+    static var statsWrite: String { isGerman ? "Schreiben" : "Write" }
+    static var statsErrorConnection: String {
+        isGerman ? "Verbindung zum Server fehlgeschlagen." : "Could not connect to the server."
+    }
+    static var statsErrorAuth: String {
+        isGerman ? "Authentifizierung fehlgeschlagen." : "Authentication failed."
+    }
+    static var statsErrorCredentials: String {
+        isGerman ? "Keine Zugangsdaten hinterlegt." : "No credentials configured."
+    }
+    static var statsErrorParse: String {
+        isGerman
+            ? "Metriken konnten nicht gelesen werden (evtl. kein Linux /proc)."
+            : "Could not read metrics (host may not expose Linux /proc)."
+    }
+    static var statsContainersTitle: String { isGerman ? "Container" : "Containers" }
+    static var statsContainersSubtitle: String {
+        isGerman
+            ? "Laufende Docker-Container auf Ihren Servern (CPU, RAM, Netzwerk, Festplatte)."
+            : "Running Docker containers on your servers (CPU, RAM, network, disk)."
+    }
+    static var statsNoContainers: String {
+        isGerman ? "Keine laufenden Container." : "No running containers."
+    }
+    static var statsDockerNotInstalled: String {
+        isGerman ? "Docker nicht installiert" : "Docker not installed"
+    }
+    static var statsDockerNotAccessible: String {
+        isGerman
+            ? "Docker nicht erreichbar (Berechtigung?)"
+            : "Docker not accessible (permissions?)"
+    }
+    static var statsNetIO: String { "Net I/O" }
+    static var statsBlockIO: String { "Block I/O" }
+    static var statsMemoryUsage: String { isGerman ? "Speicher" : "Memory" }
+    static var statsBack: String { isGerman ? "Zurück" : "Back" }
+    static var statsDetailProcesses: String { isGerman ? "Prozesse" : "Processes" }
+    static var statsDetailProcessColumn: String { isGerman ? "Prozess" : "Process" }
+    static var statsDetailCores: String { isGerman ? "Kerne" : "Cores" }
+    static var statsDetailIdle: String { "Idle" }
+    static var statsDetailUptime: String { isGerman ? "Laufzeit" : "Uptime" }
+    static var statsDetailLoad: String { "Load" }
+    static var statsDetailUser: String { "User" }
+    static var statsDetailSystem: String { "Sys" }
+    static var statsDetailIOWait: String { "IOW" }
+    static var statsDetailSteal: String { "Steal" }
+    static var statsDetailFree: String { isGerman ? "Frei" : "Free" }
+    static var statsDetailUsed: String { isGerman ? "Belegt" : "Used" }
+    static var statsDetailCached: String { isGerman ? "Cache" : "Cache" }
+    static var statsDetailInterfaces: String { isGerman ? "Schnittstellen" : "Interfaces" }
+    static var statsDetailDisks: String { isGerman ? "Festplatten" : "Disks" }
+    static var statsDetailOpenHint: String {
+        isGerman ? "Klicken für Detailansicht" : "Click for detail view"
+    }
+
+    // Remote server commands
+    static var serverCommands: String { isGerman ? "Server-Befehle" : "Server Commands" }
+    static var remoteCommandUptime: String { isGerman ? "Betriebszeit" : "Uptime" }
+    static var remoteCommandReboot: String { isGerman ? "Neustart" : "Restart" }
+    static var remoteCommandShutdown: String { isGerman ? "Herunterfahren" : "Shut Down" }
+    static var remoteCommandCancelShutdown: String { isGerman ? "Shutdown abbrechen" : "Cancel Shutdown" }
+    static var remoteCommandRun: String { isGerman ? "Ausführen" : "Run" }
+    static var remoteCommandSent: String {
+        isGerman ? "Befehl gesendet." : "Command sent."
+    }
+    static var remoteCommandDestructiveHint: String {
+        isGerman
+            ? "Der Server kann danach kurz nicht erreichbar sein. Aktive SSH-Sitzungen werden getrennt."
+            : "The host may be unreachable briefly afterward. Active SSH sessions will be disconnected."
+    }
+    static func remoteCommandConfirmUptime(_ name: String) -> String {
+        isGerman
+            ? "Betriebszeit von „\(name)“ per SSH abfragen?"
+            : "Query uptime for \"\(name)\" over SSH?"
+    }
+    static func remoteCommandConfirmReboot(_ name: String) -> String {
+        isGerman
+            ? "„\(name)“ wirklich neu starten?"
+            : "Really restart \"\(name)\"?"
+    }
+    static func remoteCommandConfirmShutdown(_ name: String) -> String {
+        isGerman
+            ? "„\(name)“ wirklich herunterfahren?"
+            : "Really shut down \"\(name)\"?"
+    }
+    static func remoteCommandConfirmCancelShutdown(_ name: String) -> String {
+        isGerman
+            ? "Geplanten Shutdown auf „\(name)“ abbrechen?"
+            : "Cancel a scheduled shutdown on \"\(name)\"?"
+    }
     static var activeConnections: String { isGerman ? "Aktive Verbindungen" : "Active Connections" }
     static var recent: String { isGerman ? "Letzte Verbindungen" : "Recent" }
     
@@ -56,6 +196,11 @@ struct LocalizedStrings {
     
     // Server Overview
     static var yourServers: String { isGerman ? "Ihre Server" : "Your Servers" }
+    static var overviewSubtitle: String {
+        isGerman
+            ? "SSH-Server verwalten, verbinden und zuletzt genutzte Hosts im Blick behalten."
+            : "Manage SSH servers, connect quickly, and keep track of recently used hosts."
+    }
     static var noServersYet: String { isGerman ? "Noch keine Server" : "No Servers Yet" }
     static var addFirstServer: String { isGerman ? "Fügen Sie Ihren ersten Server hinzu, um mit SSH-Verbindungen zu beginnen" : "Add your first server to get started with SSH connections" }
     static var addServer: String { isGerman ? "Server hinzufügen" : "Add Server" }
