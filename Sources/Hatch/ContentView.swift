@@ -1494,6 +1494,10 @@ class AppViewModel: ObservableObject {
         updateServer(updatedServer)
 
         let serverId = server.id
+        if let existing = connectedServers[server.id] {
+            existing.disconnect()
+            connectionCancellables.removeValue(forKey: server.id)
+        }
         let manager = ConnectionManager()
         manager.detectedOS = server.operatingSystem
         manager.onDetectedOS = { [weak self] os in

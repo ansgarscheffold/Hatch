@@ -264,6 +264,7 @@ struct TerminalViewInternal: View {
                 .onAppear {
                         isTerminalVisible = true
                         terminalHolder.isViewVisible = true
+                        bindTerminalInput()
                         if !terminalHolder.isInitialized {
                             setupTerminal()
                             terminalHolder.isInitialized = true
@@ -273,6 +274,14 @@ struct TerminalViewInternal: View {
                             setTerminalTheme()
                         }
 
+                        if manager.isConnected {
+                            DispatchQueue.main.async {
+                                restoreTerminalInput(forceFocus: true)
+                            }
+                        }
+                    }
+                    .onChange(of: ObjectIdentifier(manager)) { _ in
+                        bindTerminalInput()
                         if manager.isConnected {
                             DispatchQueue.main.async {
                                 restoreTerminalInput(forceFocus: true)
@@ -344,13 +353,18 @@ struct TerminalViewInternal: View {
                     }
     }
 
+    /// Leitet Tastatureingaben an den aktuellen ConnectionManager weiter (wichtig nach Reconnect:
+    /// `connect(to:)` ersetzt den Manager, die Buffer-Chain darf nicht den alten Manager festhalten).
+    private func bindTerminalInput() {
+        terminalHolder.installBufferChainIfNeeded()
+        terminalHolder.inputSink = { [manager] buffer in
+            manager.appendToInputBuffer(buffer)
+        }
+    }
+
     private func setupTerminal() {
-        // Setup terminal with SSH shell
+        bindTerminalInput()
         terminalHolder.view
-            .setupBufferChain { buffer in
-                // Handle user input from terminal
-                manager.appendToInputBuffer(buffer)
-            }
             .setupTitleChain { title in
                 print("Terminal title: \(title)")
             }
@@ -786,8 +800,24 @@ class TerminalHolder: ObservableObject {
     let view = STerminalView()
     var isInitialized = false
     var fontsInjected = false
+    private var bufferChainInstalled = false
+    /// Aktueller Ziel-Manager für Tastatureingaben (wird bei Reconnect aktualisiert).
+    var inputSink: ((String) -> Void)?
+
     /// Wird von TerminalViewInternal gesetzt — Keyboard-Bridge liest den Live-Wert.
     var isViewVisible = false
+
+    func installBufferChainIfNeeded() {
+        guard !bufferChainInstalled else { return }
+        bufferChainInstalled = true
+        view.setupBufferChain { [weak self] buffer in
+            self?.deliverInput(buffer)
+        }
+    }
+
+    func deliverInput(_ buffer: String) {
+        inputSink?(buffer)
+    }
 }
 
 struct TerminalView_Previews: PreviewProvider {
